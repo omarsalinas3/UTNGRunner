@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ícono foreground del launcher UTNGRunner.
+  Muestra un corredor (figura simple) sobre fondo dorado UTNG.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Cabeza -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M54,28 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+
+    <!-- Cuerpo -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M54,38 L50,62 L44,80 L50,80 L54,66 L58,80 L64,80 L58,62 Z" />
+
+    <!-- Brazo izquierdo (hacia atrás) -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M50,46 L38,52 L40,56 L52,50 Z" />
+
+    <!-- Brazo derecho (hacia adelante) -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M58,46 L70,40 L68,36 L56,42 Z" />
+
+</vector>

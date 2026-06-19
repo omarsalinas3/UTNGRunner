@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "mx.utng.utngrunner.wear-debug-46:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "mx.utng.utngrunner.wear-main-48:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "mx.utng.utngrunner.wear-debug-46:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "mx.utng.utngrunner.wear-main-48:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "mx.utng.utngrunner.wear-debug-46:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "mx.utng.utngrunner.wear-main-48:/drawable/ic_launcher_foreground.xml"
+    }
+]
