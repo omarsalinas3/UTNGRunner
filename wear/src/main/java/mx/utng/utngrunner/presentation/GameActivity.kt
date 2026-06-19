@@ -53,20 +53,9 @@ private object Routes {
 private fun UTNGRunnerApp() {
     val navController = rememberSwipeDismissableNavController()
 
-    // ── Ensamblado manual de dependencias (Poor Man's DI) ────────────────────
-    // En un proyecto más grande esto iría en un Hilt Module o Koin Module.
+    // ── Ensamblado manual de dependencias extraído a GameViewModelFactory ───
     val context = androidx.compose.ui.platform.LocalContext.current
-    val dataSource = remember { PreferencesDataSource(context) }
-    val repository = remember { ScoreRepositoryImpl(dataSource) }
-    val getHighScore = remember { GetHighScoreUseCase(repository) }
-    val saveHighScore = remember { SaveHighScoreUseCase(repository) }
-
-    val healthClient = remember { androidx.health.services.client.HealthServices.getClient(context) }
-    val heartRateSource = remember { mx.utng.utngrunner.data.health.HeartRateDataSource(healthClient) }
-
-    val vmFactory = remember {
-        GameViewModel.Factory(getHighScore, saveHighScore, heartRateSource, context)
-    }
+    val vmFactory = remember { mx.utng.utngrunner.presentation.game.GameViewModelFactory(context) }
     val gameViewModel: GameViewModel = viewModel(factory = vmFactory)
 
     // ── Navegación Wear OS ───────────────────────────────────────────────────

@@ -148,15 +148,4 @@ class GameViewModel(
         super.onCleared()
     }
     
-    // ── Factory ───────────────────────────────────────────────────────────────
-    class Factory(
-        private val getHighScore: GetHighScoreUseCase,
-        private val saveHighScore: SaveHighScoreUseCase,
-        private val heartRateSource: HeartRateDataSource,
-        private val context: Context
-    ) : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            GameViewModel(getHighScore, saveHighScore, heartRateSource, context) as T
-    }
 }
