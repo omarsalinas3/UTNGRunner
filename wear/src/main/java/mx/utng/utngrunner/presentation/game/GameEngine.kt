@@ -1,141 +1,219 @@
 package mx.utng.utngrunner.presentation.game
 
 import mx.utng.utngrunner.domain.model.Coin
+import mx.utng.utngrunner.domain.model.GamePhase
 import mx.utng.utngrunner.domain.model.GameState
 import mx.utng.utngrunner.domain.model.Obstacle
+import mx.utng.utngrunner.domain.model.ObstacleType
 import mx.utng.utngrunner.domain.model.Player
+import kotlin.math.sin
+import kotlin.random.Random
 
 /**
  * Motor del juego — lógica de simulación a ~60 fps.
  *
  * Responsabilidades:
- * - Física del jugador (gravedad, salto)
- * - Generación y movimiento de obstáculos y monedas
- * - Detección de colisiones
- * - Incremento de puntuación
+ * - Física del jugador (gravedad, salto, deslizamiento, invencibilidad)
+ * - Generación y movimiento de obstáculos temáticos (TAREA/EXAMEN/BUG/REPO)
+ * - Generación y animación senoidal de monedas
+ * - Detección de colisiones con hitbox por tipo de obstáculo
+ * - Incremento de velocidad por nivel
  *
- * Pertenece a Presentación porque opera sobre estado de UI (GameState)
- * y es controlado por el ViewModel. No tiene imports Android directos.
+ * Objeto singleton — no tiene estado propio; todo el estado va en [GameState].
  */
 object GameEngine {
 
-    // ── Constantes físicas ───────────────────────────────────────────────────
-    private const val GRAVITY = 1.2f
-    private const val JUMP_FORCE = -18f
-    private const val GROUND_Y = 200f
-    private const val SCROLL_SPEED = 5f
-    private const val OBSTACLE_SPAWN_INTERVAL = 80   // frames
-    private const val COIN_SPAWN_INTERVAL = 50        // frames
+    // ── Intervalos de spawn (frames) ─────────────────────────────────────────
+    private const val OBS_INTERVAL_MIN  = 60
+    private const val OBS_INTERVAL_MAX  = 120
+    private const val COIN_INTERVAL_MIN = 40
+    private const val COIN_INTERVAL_MAX = 90
+    private const val SCORE_PER_LEVEL   = 20
 
-    private var frameCount = 0
-    private var obstacleIdCounter = 0
-    private var coinIdCounter = 0
+    private var frameCount      = 0
+    private var nextObsIn       = OBS_INTERVAL_MIN
+    private var nextCoinIn      = COIN_INTERVAL_MIN
+    private var obstacleCounter = 0
+
+    // ── API pública ───────────────────────────────────────────────────────────
+
+    /** Reinicia contadores internos para una nueva partida. */
+    fun reset() {
+        frameCount      = 0
+        nextObsIn       = randomInterval(OBS_INTERVAL_MIN, OBS_INTERVAL_MAX)
+        nextCoinIn      = randomInterval(COIN_INTERVAL_MIN, COIN_INTERVAL_MAX)
+        obstacleCounter = 0
+    }
 
     /**
-     * Calcula el siguiente estado del juego dado el estado actual.
-     * Llama este método en cada tick del game loop (CoroutineTimer en ViewModel).
-     *
-     * @param current estado actual del juego
-     * @param screenWidth ancho de la pantalla en píxeles lógicos
-     * @return nuevo [GameState] con las entidades actualizadas
+     * Calcula el siguiente [GameState] dado el estado actual.
+     * Llamado en cada tick del game loop (~60 fps) desde [GameViewModel].
      */
     fun tick(current: GameState, screenWidth: Float): GameState {
-        if (!current.isRunning || current.isGameOver) return current
+        if (current.phase != GamePhase.PLAYING) return current
 
         frameCount++
 
-        // ── Física del jugador ───────────────────────────────────────────────
-        var player = current.player
-        var newVelocityY = player.velocityY + GRAVITY
-        var newY = player.y + newVelocityY
+        // ── Velocidad progresiva por nivel ────────────────────────────────────
+        val level     = (current.score / SCORE_PER_LEVEL) + 1
+        val gameSpeed = (3f + (level - 1) * 0.4f).coerceAtMost(10f)
 
-        if (newY >= GROUND_Y) {
-            newY = GROUND_Y
-            newVelocityY = 0f
-        }
-        player = player.copy(y = newY, velocityY = newVelocityY)
+        // ── Física del jugador ────────────────────────────────────────────────
+        val player = tickPlayer(current.player)
 
-        // ── Obstáculos ───────────────────────────────────────────────────────
+        // ── Obstáculos ────────────────────────────────────────────────────────
         var obstacles = current.obstacles
-            .map { it.copy(x = it.x - SCROLL_SPEED) }
+            .map { it.copy(x = it.x - gameSpeed) }
             .filter { it.x + it.width > 0 }
 
-        if (frameCount % OBSTACLE_SPAWN_INTERVAL == 0) {
-            obstacles = obstacles + Obstacle(
-                id = obstacleIdCounter++,
-                x = screenWidth,
-                y = GROUND_Y - 60f,
-            )
+        nextObsIn--
+        if (nextObsIn <= 0) {
+            obstacles  = obstacles + spawnObstacle(screenWidth)
+            nextObsIn  = randomInterval(OBS_INTERVAL_MIN, OBS_INTERVAL_MAX)
         }
 
-        // ── Monedas ──────────────────────────────────────────────────────────
+        // ── Monedas ───────────────────────────────────────────────────────────
         var coins = current.coins
-            .map { it.copy(x = it.x - SCROLL_SPEED) }
-            .filter { it.x + it.radius > 0 && !it.isCollected }
+            .map { it.copy(x = it.x - gameSpeed) }
+            .filter { it.x + 8f > 0 && !it.collected }
 
-        if (frameCount % COIN_SPAWN_INTERVAL == 0) {
-            coins = coins + Coin(
-                id = coinIdCounter++,
-                x = screenWidth,
-                y = GROUND_Y - 80f,
-            )
+        nextCoinIn--
+        if (nextCoinIn <= 0) {
+            coins     = coins + spawnCoin(screenWidth)
+            nextCoinIn = randomInterval(COIN_INTERVAL_MIN, COIN_INTERVAL_MAX)
         }
 
-        // ── Detección de colisiones ──────────────────────────────────────────
-        val playerRect = FloatRect(player.x - 15f, player.y - 30f, 30f, 30f)
+        // ── Detección de colisiones ───────────────────────────────────────────
+        val playerHitbox = playerHitbox(player)
 
-        val hitObstacle = obstacles.any { obs ->
-            rectsOverlap(playerRect, FloatRect(obs.x, obs.y, obs.width, obs.height))
+        val hitObstacle = !player.isInvincible && obstacles.any { obs ->
+            rectsOverlap(playerHitbox, obstacleHitbox(obs, player.y))
         }
 
-        val collectedCoins = coins.filter { coin ->
-            circleRectOverlap(coin.x, coin.y, coin.radius, playerRect)
+        val (collectedCoins, remainingCoins) = coins.partition { coin ->
+            circleRectOverlap(coin.x, coin.y + sin(coin.phase) * 4f, 6f, playerHitbox)
         }
-        val remainingCoins = coins.map { coin ->
-            if (collectedCoins.contains(coin)) coin.copy(isCollected = true) else coin
-        }.filter { !it.isCollected }
 
         val newScore = current.score + collectedCoins.size
+        val newLives = if (hitObstacle) current.lives - 1 else current.lives
+        val newPhase = if (newLives <= 0) GamePhase.DEAD else GamePhase.PLAYING
+
+        // Al golpear obstáculo → invencibilidad temporal
+        val updatedPlayer = if (hitObstacle && newLives > 0)
+            player.copy(isInvincible = true, invincibleFrames = Player.INVINCIBLE_FRAMES)
+        else
+            player
 
         return current.copy(
-            player = player,
+            phase     = newPhase,
+            score     = newScore,
+            level     = level,
+            lives     = newLives,
+            gameSpeed = gameSpeed,
+            player    = updatedPlayer,
             obstacles = obstacles,
-            coins = remainingCoins,
-            score = newScore,
-            isGameOver = hitObstacle,
-            isRunning = !hitObstacle,
+            coins     = remainingCoins.map { it.copy(phase = it.phase + 0.15f) },
+            highScore = maxOf(current.highScore, newScore),
         )
     }
 
     /**
-     * Aplica impulso de salto al jugador (solo si está en el suelo).
+     * Aplica impulso de salto (solo si está en el suelo y no está deslizando).
      */
     fun jump(current: GameState): GameState {
-        if (current.player.y < GROUND_Y) return current // ya en el aire
+        val p = current.player
+        if (p.isJumping || p.isSliding) return current
         return current.copy(
-            player = current.player.copy(velocityY = JUMP_FORCE),
+            player = p.copy(
+                velocityY = Player.JUMP_VELOCITY,
+                isJumping = true,
+            ),
         )
     }
 
-    /** Reinicia contadores internos del motor para una nueva partida. */
-    fun reset() {
-        frameCount = 0
-        obstacleIdCounter = 0
-        coinIdCounter = 0
+    /**
+     * Inicia deslizamiento (solo si está en el suelo y no está saltando).
+     */
+    fun slide(current: GameState): GameState {
+        val p = current.player
+        if (p.isJumping || p.isSliding) return current
+        return current.copy(
+            player = p.copy(
+                isSliding  = true,
+                slideFrames = Player.SLIDE_DURATION,
+            ),
+        )
     }
 
-    // ── Helpers de colisión (privados) ───────────────────────────────────────
-    private data class FloatRect(val x: Float, val y: Float, val w: Float, val h: Float)
+    // ── Física privada ────────────────────────────────────────────────────────
 
-    private fun rectsOverlap(a: FloatRect, b: FloatRect): Boolean =
+    private fun tickPlayer(p: Player): Player {
+        // Gravedad
+        var vy = p.velocityY + Player.GRAVITY
+        var y  = p.y + vy
+        var jumping = p.isJumping
+
+        if (y >= Player.FLOOR_Y) {
+            y       = Player.FLOOR_Y
+            vy      = 0f
+            jumping = false
+        }
+
+        // Deslizamiento
+        val slideFrames = (p.slideFrames - 1).coerceAtLeast(0)
+        val sliding     = slideFrames > 0
+
+        // Invencibilidad
+        val invFrames   = (p.invincibleFrames - 1).coerceAtLeast(0)
+        val invincible  = invFrames > 0
+
+        return p.copy(
+            y                = y,
+            velocityY        = vy,
+            isJumping        = jumping,
+            isSliding        = sliding,
+            slideFrames      = slideFrames,
+            isInvincible     = invincible,
+            invincibleFrames = invFrames,
+        )
+    }
+
+    // ── Spawn ─────────────────────────────────────────────────────────────────
+
+    private fun spawnObstacle(screenWidth: Float): Obstacle {
+        val type = ObstacleType.entries.random()
+        return Obstacle(x = screenWidth + 10f, width = type.w, height = type.h, type = type)
+    }
+
+    private fun spawnCoin(screenWidth: Float): Coin {
+        val y = Player.FLOOR_Y - Random.nextFloat() * 60f - 20f
+        return Coin(x = screenWidth + 10f, y = y, phase = Random.nextFloat() * 6.28f)
+    }
+
+    // ── Hitboxes ──────────────────────────────────────────────────────────────
+
+    private data class Rect(val x: Float, val y: Float, val w: Float, val h: Float)
+
+    private fun playerHitbox(p: Player): Rect {
+        val h = if (p.isSliding) 14f else 28f
+        val w = 18f
+        return Rect(p.x - w / 2f, p.y - h, w, h)
+    }
+
+    private fun obstacleHitbox(obs: Obstacle, floorY: Float): Rect =
+        Rect(obs.x, floorY - obs.height, obs.width.toFloat(), obs.height.toFloat())
+
+    private fun rectsOverlap(a: Rect, b: Rect): Boolean =
         a.x < b.x + b.w && a.x + a.w > b.x &&
             a.y < b.y + b.h && a.y + a.h > b.y
 
-    private fun circleRectOverlap(cx: Float, cy: Float, r: Float, rect: FloatRect): Boolean {
-        val nearestX = cx.coerceIn(rect.x, rect.x + rect.w)
-        val nearestY = cy.coerceIn(rect.y, rect.y + rect.h)
-        val dx = cx - nearestX
-        val dy = cy - nearestY
+    private fun circleRectOverlap(cx: Float, cy: Float, r: Float, rect: Rect): Boolean {
+        val nx = cx.coerceIn(rect.x, rect.x + rect.w)
+        val ny = cy.coerceIn(rect.y, rect.y + rect.h)
+        val dx = cx - nx
+        val dy = cy - ny
         return dx * dx + dy * dy <= r * r
     }
+
+    private fun randomInterval(min: Int, max: Int) = Random.nextInt(min, max + 1)
 }

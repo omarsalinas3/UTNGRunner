@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import mx.utng.utngrunner.domain.model.GamePhase
 import mx.utng.utngrunner.domain.model.GameState
 import mx.utng.utngrunner.domain.usecase.GetHighScoreUseCase
 import mx.utng.utngrunner.domain.usecase.SaveHighScoreUseCase
@@ -21,12 +22,12 @@ import mx.utng.utngrunner.domain.usecase.SaveHighScoreUseCase
  * ViewModel del juego — gestiona el estado de UI y el game loop.
  *
  * Responsabilidades:
- * - Mantener [GameState] como StateFlow para que GameScreen recomponga
- * - Arrancar/detener el game loop a 60 fps usando coroutines
- * - Delegar lógica de puntuación a los use-cases del dominio
+ * - Mantener [GameState] como StateFlow para que [GameScreen] recomponga
+ * - Arrancar/detener el game loop a ~60 fps usando coroutines
+ * - Delegar lógica de dominio a [GetHighScoreUseCase] / [SaveHighScoreUseCase]
  * - Coordinar con [GameEngine] para calcular cada frame
  *
- * NO conoce nada de Composable ni del Canvas — eso es trabajo de GameScreen/GameRenderer.
+ * NO conoce Composables ni Canvas — eso es responsabilidad de GameScreen/GameRenderer.
  */
 class GameViewModel(
     private val getHighScoreUseCase: GetHighScoreUseCase,
@@ -35,28 +36,27 @@ class GameViewModel(
 ) : ViewModel() {
 
     companion object {
-        private const val FRAME_DELAY_MS = 16L // ~60 fps
+        private const val FRAME_DELAY_MS = 16L  // ~60 fps
     }
 
-    // ── Estado de UI ─────────────────────────────────────────────────────────
+    // ── Estado de UI ──────────────────────────────────────────────────────────
     private val _gameState = MutableStateFlow(GameState())
     val gameState: StateFlow<GameState> = _gameState.asStateFlow()
 
-    // ── Dimensiones de pantalla (se fijan desde GameScreen al primer layout) ─
-    var screenWidth: Float = 454f  // Wear OS Galaxy Watch 6 default
-        private set
+    // ── Dimensiones de pantalla ───────────────────────────────────────────────
+    private var screenWidth: Float = 454f   // Galaxy Watch 6 por defecto
 
     private var gameLoopJob: Job? = null
 
-    // ── Ciclo de vida del juego ───────────────────────────────────────────────
+    // ── API pública ───────────────────────────────────────────────────────────
 
-    /** Inicia el juego cargando el récord histórico y arrancando el game loop. */
+    /** Inicia una nueva partida cargando el récord histórico. */
     fun startGame() {
         viewModelScope.launch {
             val highScore = getHighScoreUseCase()
             GameEngine.reset()
             _gameState.value = GameState(
-                isRunning = true,
+                phase     = GamePhase.PLAYING,
                 highScore = highScore,
             )
             startGameLoop()
@@ -68,25 +68,24 @@ class GameViewModel(
         _gameState.value = GameEngine.jump(_gameState.value)
     }
 
-    /** Pausa / reanuda el game loop. */
-    fun togglePause() {
-        val current = _gameState.value
-        if (current.isGameOver) return
-        if (current.isRunning) {
-            gameLoopJob?.cancel()
-            _gameState.value = current.copy(isRunning = false)
-        } else {
-            _gameState.value = current.copy(isRunning = true)
-            startGameLoop()
-        }
+    /** El jugador hace swipe hacia abajo → deslizamiento. */
+    fun onSlide() {
+        _gameState.value = GameEngine.slide(_gameState.value)
     }
 
-    /** Llamado al detectar game over: guarda récord y detiene el loop. */
-    fun onGameOver() {
-        gameLoopJob?.cancel()
-        vibrate()
-        viewModelScope.launch {
-            saveHighScoreUseCase(_gameState.value.score)
+    /** Pausa o reanuda el game loop. */
+    fun togglePause() {
+        val state = _gameState.value
+        when (state.phase) {
+            GamePhase.PLAYING -> {
+                gameLoopJob?.cancel()
+                _gameState.value = state.copy(phase = GamePhase.PAUSED)
+            }
+            GamePhase.PAUSED -> {
+                _gameState.value = state.copy(phase = GamePhase.PLAYING)
+                startGameLoop()
+            }
+            else -> Unit
         }
     }
 
@@ -100,15 +99,23 @@ class GameViewModel(
     private fun startGameLoop() {
         gameLoopJob?.cancel()
         gameLoopJob = viewModelScope.launch {
-            while (_gameState.value.isRunning) {
+            while (_gameState.value.phase == GamePhase.PLAYING) {
                 delay(FRAME_DELAY_MS)
                 val next = GameEngine.tick(_gameState.value, screenWidth)
                 _gameState.value = next
-                if (next.isGameOver) {
-                    onGameOver()
+                if (next.phase == GamePhase.DEAD) {
+                    onGameOver(next.score)
                     break
                 }
             }
+        }
+    }
+
+    private fun onGameOver(score: Int) {
+        gameLoopJob?.cancel()
+        vibrate()
+        viewModelScope.launch {
+            saveHighScoreUseCase(score)
         }
     }
 
@@ -131,10 +138,6 @@ class GameViewModel(
 
     // ── Factory ───────────────────────────────────────────────────────────────
 
-    /**
-     * Factory para instanciar GameViewModel con sus dependencias
-     * sin necesidad de un framework DI (Hilt, Koin).
-     */
     class Factory(
         private val getHighScoreUseCase: GetHighScoreUseCase,
         private val saveHighScoreUseCase: SaveHighScoreUseCase,

@@ -1,17 +1,24 @@
 package mx.utng.utngrunner.domain.model
 
 /**
- * Entidad del jugador.
+ * Entidad del jugador con física completa.
  * Kotlin puro — sin dependencias Android.
- *
- * @property x          posición horizontal en píxeles lógicos
- * @property y          posición vertical en píxeles lógicos
- * @property velocityY  velocidad vertical (positivo = cae, negativo = salta)
- * @property isAlive    false cuando el jugador ha colisionado fatalmente
  */
 data class Player(
-    val x: Float = 80f,
-    val y: Float = 200f,
-    val velocityY: Float = 0f,
-    val isAlive: Boolean = true,
-)
+    val x: Float            = 55f,
+    val y: Float            = FLOOR_Y,
+    val velocityY: Float    = 0f,
+    val isJumping: Boolean  = false,
+    val isSliding: Boolean  = false,
+    val slideFrames: Int    = 0,         // frames restantes de deslizamiento
+    val isInvincible: Boolean  = false,
+    val invincibleFrames: Int  = 0,
+) {
+    companion object {
+        const val FLOOR_Y           = 160f
+        const val JUMP_VELOCITY     = -12f
+        const val GRAVITY           = 0.6f
+        const val SLIDE_DURATION    = 30
+        const val INVINCIBLE_FRAMES = 80
+    }
+}
