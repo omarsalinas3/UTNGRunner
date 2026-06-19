@@ -48,6 +48,18 @@ fun GameScreen(
         }
     }
 
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
+    LaunchedEffect(Unit) {
+        viewModel.hapticEvents.collect { type ->
+            when (type) {
+                mx.utng.utngrunner.presentation.game.HapticType.JUMP -> 
+                    hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                mx.utng.utngrunner.presentation.game.HapticType.HIT  -> 
+                    hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            }
+        }
+    }
+
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 

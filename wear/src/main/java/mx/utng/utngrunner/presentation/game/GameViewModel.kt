@@ -8,10 +8,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import mx.utng.utngrunner.data.health.HeartRateDataSource
@@ -20,6 +22,8 @@ import mx.utng.utngrunner.domain.model.GameState
 import mx.utng.utngrunner.domain.model.Player
 import mx.utng.utngrunner.domain.usecase.GetHighScoreUseCase
 import mx.utng.utngrunner.domain.usecase.SaveHighScoreUseCase
+
+enum class HapticType { JUMP, HIT }
 
 class GameViewModel(
     private val getHighScore: GetHighScoreUseCase,
@@ -33,6 +37,9 @@ class GameViewModel(
     
     // Alias de retrocompatibilidad para no romper GameScreen
     val gameState: StateFlow<GameState> = state
+
+    private val _hapticChannel = Channel<HapticType>()
+    val hapticEvents = _hapticChannel.receiveAsFlow()
 
     private var gameFrame = 0L
     private var gameJob: Job? = null
@@ -58,7 +65,11 @@ class GameViewModel(
             // 60 fps → ~16ms por frame
             while (_state.value.phase == GamePhase.PLAYING) {
                 delay(16L)
+                val prevLives = _state.value.lives
                 _state.update { GameEngine.update(it, gameFrame++) }
+                if (_state.value.lives < prevLives) {
+                    _hapticChannel.trySend(HapticType.HIT)
+                }
             }
             if (_state.value.phase == GamePhase.DEAD) {
                 vibrate()
@@ -76,6 +87,7 @@ class GameViewModel(
                     _state.update { it.copy(player = it.player.copy(
                         velocityY = Player.JUMP_VELOCITY, isJumping = true
                     ))}
+                    _hapticChannel.trySend(HapticType.JUMP)
                 }
             }
             else -> {}

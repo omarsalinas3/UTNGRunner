@@ -13,6 +13,7 @@
 
     <!-- Permiso para Health Services (frecuencia cardíaca) -->
     <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- Permiso para feedback háptico (vibración en game over) -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -38,6 +39,7 @@
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_launcher_foreground"
         android:supportsRtl="true"
+        android:testOnly="true"
         android:theme="@android:style/Theme.DeviceDefault" >
         <activity
             android:name="mx.utng.utngrunner.presentation.GameActivity"

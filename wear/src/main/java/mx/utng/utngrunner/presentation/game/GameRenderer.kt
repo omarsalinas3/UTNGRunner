@@ -131,15 +131,18 @@ object GameRenderer {
 
         // Hora del sistema en la parte superior
         val currentTime = timeFormat.format(Date())
-        drawCenteredText(currentTime, cx, 22f, 14f)
+        drawCenteredText(currentTime, cx, 30f, 14f)
 
         // Puntuación inferior
-        drawCenteredText("${state.score} pts", cx, size.height - 14f, 11f)
+        drawCenteredText("${state.score} pts", cx, size.height - 20f, 12f)
+
+        // Frecuencia cardíaca (BPM) 
+        drawCenteredText("❤️ ${state.heartRate} bpm", cx, 55f, 10f, android.graphics.Color.parseColor("#FF5252"))
 
         // Vidas dibujadas como iconos
         val startX = cx - (state.lives * 8f) + 8f
         repeat(state.lives) { i ->
-            drawCenteredText("❤", startX + (i * 16f), 40f, 12f, android.graphics.Color.RED)
+            drawCenteredText("❤", startX + (i * 16f), 80f, 12f, android.graphics.Color.RED)
         }
     }
 
