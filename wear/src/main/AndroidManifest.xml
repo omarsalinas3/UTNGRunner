@@ -8,6 +8,10 @@
     <!-- Permiso para Health Services (frecuencia cardíaca) -->
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Permiso para feedback háptico (vibración en game over) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Mantener CPU activa durante el game loop -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
