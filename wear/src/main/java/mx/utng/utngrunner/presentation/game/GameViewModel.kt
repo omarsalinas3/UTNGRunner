@@ -54,7 +54,6 @@ class GameViewModel(
     fun startGame() {
         viewModelScope.launch {
             val highScore = getHighScoreUseCase()
-            GameEngine.reset()
             _gameState.value = GameState(
                 phase     = GamePhase.PLAYING,
                 highScore = highScore,
@@ -99,9 +98,11 @@ class GameViewModel(
     private fun startGameLoop() {
         gameLoopJob?.cancel()
         gameLoopJob = viewModelScope.launch {
+            var frame = 0L
             while (_gameState.value.phase == GamePhase.PLAYING) {
                 delay(FRAME_DELAY_MS)
-                val next = GameEngine.tick(_gameState.value, screenWidth)
+                frame++
+                val next = GameEngine.update(_gameState.value, frame)
                 _gameState.value = next
                 if (next.phase == GamePhase.DEAD) {
                     onGameOver(next.score)

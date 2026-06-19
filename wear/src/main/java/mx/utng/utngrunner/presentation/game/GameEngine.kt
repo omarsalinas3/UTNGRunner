@@ -6,214 +6,148 @@ import mx.utng.utngrunner.domain.model.GameState
 import mx.utng.utngrunner.domain.model.Obstacle
 import mx.utng.utngrunner.domain.model.ObstacleType
 import mx.utng.utngrunner.domain.model.Player
-import kotlin.math.sin
-import kotlin.random.Random
+import kotlin.math.hypot
 
 /**
- * Motor del juego — lógica de simulación a ~60 fps.
- *
- * Responsabilidades:
- * - Física del jugador (gravedad, salto, deslizamiento, invencibilidad)
- * - Generación y movimiento de obstáculos temáticos (TAREA/EXAMEN/BUG/REPO)
- * - Generación y animación senoidal de monedas
- * - Detección de colisiones con hitbox por tipo de obstáculo
- * - Incremento de velocidad por nivel
- *
- * Objeto singleton — no tiene estado propio; todo el estado va en [GameState].
+ * GameEngine: FUNCIÓN PURA.
+ * - No conoce Canvas, Composables ni Android.
+ * - Recibe un GameState y retorna el siguiente GameState.
+ * - Fácil de testear unitariamente.
  */
 object GameEngine {
 
-    // ── Intervalos de spawn (frames) ─────────────────────────────────────────
-    private const val OBS_INTERVAL_MIN  = 60
-    private const val OBS_INTERVAL_MAX  = 120
-    private const val COIN_INTERVAL_MIN = 40
-    private const val COIN_INTERVAL_MAX = 90
-    private const val SCORE_PER_LEVEL   = 20
+    fun update(state: GameState, frame: Long): GameState {
+        if (state.phase != GamePhase.PLAYING) return state
 
-    private var frameCount      = 0
-    private var nextObsIn       = OBS_INTERVAL_MIN
-    private var nextCoinIn      = COIN_INTERVAL_MIN
-    private var obstacleCounter = 0
+        val updatedPlayer  = updatePlayer(state.player)
+        
+        // Puntos base por tiempo (cada 6 frames = 10 puntos por seg aprox)
+        val baseScore      = state.score + if (frame % 6 == 0L) 1 else 0 
+        val newLevel       = calculateLevel(baseScore)
+        val newSpeed       = 3f + newLevel * 0.6f
+        
+        val updatedObs     = updateObstacles(state.obstacles, newSpeed, frame)
+        val updatedCoins   = updateCoins(state.coins, newSpeed, frame)
+        
+        val afterCollision = checkCollisions(
+            updatedPlayer, updatedObs, updatedCoins, state.lives
+        )
 
-    // ── API pública ───────────────────────────────────────────────────────────
+        // Monedas recogidas suman puntos extra (5 por moneda)
+        val coinsCollected = state.coins.size - afterCollision.coins.size
+        val newScore = baseScore + (coinsCollected * 5)
 
-    /** Reinicia contadores internos para una nueva partida. */
-    fun reset() {
-        frameCount      = 0
-        nextObsIn       = randomInterval(OBS_INTERVAL_MIN, OBS_INTERVAL_MAX)
-        nextCoinIn      = randomInterval(COIN_INTERVAL_MIN, COIN_INTERVAL_MAX)
-        obstacleCounter = 0
-    }
-
-    /**
-     * Calcula el siguiente [GameState] dado el estado actual.
-     * Llamado en cada tick del game loop (~60 fps) desde [GameViewModel].
-     */
-    fun tick(current: GameState, screenWidth: Float): GameState {
-        if (current.phase != GamePhase.PLAYING) return current
-
-        frameCount++
-
-        // ── Velocidad progresiva por nivel ────────────────────────────────────
-        val level     = (current.score / SCORE_PER_LEVEL) + 1
-        val gameSpeed = (3f + (level - 1) * 0.4f).coerceAtMost(10f)
-
-        // ── Física del jugador ────────────────────────────────────────────────
-        val player = tickPlayer(current.player)
-
-        // ── Obstáculos ────────────────────────────────────────────────────────
-        var obstacles = current.obstacles
-            .map { it.copy(x = it.x - gameSpeed) }
-            .filter { it.x + it.width > 0 }
-
-        nextObsIn--
-        if (nextObsIn <= 0) {
-            obstacles  = obstacles + spawnObstacle(screenWidth)
-            nextObsIn  = randomInterval(OBS_INTERVAL_MIN, OBS_INTERVAL_MAX)
-        }
-
-        // ── Monedas ───────────────────────────────────────────────────────────
-        var coins = current.coins
-            .map { it.copy(x = it.x - gameSpeed) }
-            .filter { it.x + 8f > 0 && !it.collected }
-
-        nextCoinIn--
-        if (nextCoinIn <= 0) {
-            coins     = coins + spawnCoin(screenWidth)
-            nextCoinIn = randomInterval(COIN_INTERVAL_MIN, COIN_INTERVAL_MAX)
-        }
-
-        // ── Detección de colisiones ───────────────────────────────────────────
-        val playerHitbox = playerHitbox(player)
-
-        val hitObstacle = !player.isInvincible && obstacles.any { obs ->
-            rectsOverlap(playerHitbox, obstacleHitbox(obs, player.y))
-        }
-
-        val (collectedCoins, remainingCoins) = coins.partition { coin ->
-            circleRectOverlap(coin.x, coin.y + sin(coin.phase) * 4f, 6f, playerHitbox)
-        }
-
-        val newScore = current.score + collectedCoins.size
-        val newLives = if (hitObstacle) current.lives - 1 else current.lives
-        val newPhase = if (newLives <= 0) GamePhase.DEAD else GamePhase.PLAYING
-
-        // Al golpear obstáculo → invencibilidad temporal
-        val updatedPlayer = if (hitObstacle && newLives > 0)
-            player.copy(isInvincible = true, invincibleFrames = Player.INVINCIBLE_FRAMES)
-        else
-            player
-
-        return current.copy(
-            phase     = newPhase,
+        return state.copy(
+            player    = afterCollision.player,
             score     = newScore,
-            level     = level,
-            lives     = newLives,
-            gameSpeed = gameSpeed,
-            player    = updatedPlayer,
-            obstacles = obstacles,
-            coins     = remainingCoins.map { it.copy(phase = it.phase + 0.15f) },
-            highScore = maxOf(current.highScore, newScore),
+            level     = newLevel,
+            lives     = afterCollision.lives,
+            gameSpeed = newSpeed,
+            obstacles = afterCollision.obstacles,
+            coins     = afterCollision.coins,
+            phase     = if (afterCollision.lives <= 0) GamePhase.DEAD
+                        else GamePhase.PLAYING,
+            highScore = maxOf(state.highScore, newScore)
         )
     }
 
-    /**
-     * Aplica impulso de salto (solo si está en el suelo y no está deslizando).
-     */
-    fun jump(current: GameState): GameState {
-        val p = current.player
-        if (p.isJumping || p.isSliding) return current
-        return current.copy(
-            player = p.copy(
-                velocityY = Player.JUMP_VELOCITY,
-                isJumping = true,
-            ),
+    private fun updatePlayer(p: Player): Player {
+        val newVelY = p.velocityY + Player.GRAVITY
+        val newY    = (p.y + newVelY).coerceAtMost(Player.FLOOR_Y)
+        val landed  = newY >= Player.FLOOR_Y
+        return p.copy(
+            y               = newY,
+            velocityY       = if (landed) 0f else newVelY,
+            isJumping       = !landed && p.isJumping,
+            isSliding       = p.slideFrames > 0,
+            slideFrames     = (p.slideFrames - 1).coerceAtLeast(0),
+            isInvincible    = p.invincibleFrames > 0,
+            invincibleFrames= (p.invincibleFrames - 1).coerceAtLeast(0)
         )
     }
 
-    /**
-     * Inicia deslizamiento (solo si está en el suelo y no está saltando).
-     */
-    fun slide(current: GameState): GameState {
-        val p = current.player
-        if (p.isJumping || p.isSliding) return current
-        return current.copy(
-            player = p.copy(
-                isSliding  = true,
-                slideFrames = Player.SLIDE_DURATION,
-            ),
-        )
+    private fun calculateLevel(score: Int): Int =
+        (1 + score / 300).coerceAtMost(5)
+
+    private fun updateObstacles(
+        obstacles: List<Obstacle>, speed: Float, frame: Long
+    ): List<Obstacle> {
+        val moved = obstacles
+            .map { it.copy(x = it.x - speed) }
+            .filter { it.x > -50f }
+            
+        // Spawn probabilístico (evita saturar la pantalla)
+        val shouldSpawn = frame % 80 == 0L && Math.random() < 0.6
+        return if (shouldSpawn) {
+            val type = ObstacleType.entries.random()
+            moved + Obstacle(x = 240f, width = type.w, height = type.h, type = type)
+        } else moved
     }
 
-    // ── Física privada ────────────────────────────────────────────────────────
+    private fun updateCoins(
+        coins: List<Coin>, speed: Float, frame: Long
+    ): List<Coin> {
+        val moved = coins
+            .map { it.copy(x = it.x - speed, phase = it.phase + 0.15f) }
+            .filter { it.x > -50f && !it.collected }
+            
+        // Spawn probabilístico de monedas
+        val shouldSpawn = frame % 60 == 0L && Math.random() < 0.5
+        return if (shouldSpawn) {
+            val y = Player.FLOOR_Y - 20f - (Math.random() * 50f).toFloat()
+            moved + Coin(x = 240f, y = y, phase = 0f)
+        } else moved
+    }
 
-    private fun tickPlayer(p: Player): Player {
-        // Gravedad
-        var vy = p.velocityY + Player.GRAVITY
-        var y  = p.y + vy
-        var jumping = p.isJumping
+    /** Detección AABB (Axis-Aligned Bounding Box) */
+    private fun checkCollisions(
+        player: Player, obstacles: List<Obstacle>, coins: List<Coin>, currentLives: Int
+    ): CollisionResult {
+        var lives = currentLives
+        val FLOOR = Player.FLOOR_Y
+        val cLeft  = player.x - 10f
+        val cRight = player.x + 18f
+        val cTop   = player.y - (if (player.isSliding) 8f else 30f)
+        val cBot   = player.y + 20f
 
-        if (y >= Player.FLOOR_Y) {
-            y       = Player.FLOOR_Y
-            vy      = 0f
-            jumping = false
+        val hitObs = obstacles.filter { o ->
+            !player.isInvincible &&
+            cRight > o.x + 4f && cLeft < o.x + o.width - 4f &&
+            cBot > FLOOR - o.height && cTop < FLOOR
         }
 
-        // Deslizamiento
-        val slideFrames = (p.slideFrames - 1).coerceAtLeast(0)
-        val sliding     = slideFrames > 0
+        val updatedCoins = coins.map { cn ->
+            if (!cn.collected && hypot((player.x - cn.x).toDouble(), (player.y - cn.y).toDouble()) < 22.0)
+                cn.copy(collected = true)
+            else cn
+        }
 
-        // Invencibilidad
-        val invFrames   = (p.invincibleFrames - 1).coerceAtLeast(0)
-        val invincible  = invFrames > 0
-
-        return p.copy(
-            y                = y,
-            velocityY        = vy,
-            isJumping        = jumping,
-            isSliding        = sliding,
-            slideFrames      = slideFrames,
-            isInvincible     = invincible,
-            invincibleFrames = invFrames,
+        return CollisionResult(
+            player    = if (hitObs.isNotEmpty()) player.copy(invincibleFrames = Player.INVINCIBLE_FRAMES) else player,
+            lives     = if (hitObs.isNotEmpty()) lives - hitObs.size else lives,
+            obstacles = obstacles.map { if (it in hitObs) it.copy(x = -999f) else it },
+            coins     = updatedCoins.filter { !it.collected }
         )
     }
 
-    // ── Spawn ─────────────────────────────────────────────────────────────────
-
-    private fun spawnObstacle(screenWidth: Float): Obstacle {
-        val type = ObstacleType.entries.random()
-        return Obstacle(x = screenWidth + 10f, width = type.w, height = type.h, type = type)
+    // --- Inputs del jugador ---
+    
+    fun jump(state: GameState): GameState {
+        val p = state.player
+        if (p.isJumping || p.isSliding) return state
+        return state.copy(player = p.copy(velocityY = Player.JUMP_VELOCITY, isJumping = true))
     }
 
-    private fun spawnCoin(screenWidth: Float): Coin {
-        val y = Player.FLOOR_Y - Random.nextFloat() * 60f - 20f
-        return Coin(x = screenWidth + 10f, y = y, phase = Random.nextFloat() * 6.28f)
+    fun slide(state: GameState): GameState {
+        val p = state.player
+        if (p.isJumping || p.isSliding) return state
+        return state.copy(player = p.copy(isSliding = true, slideFrames = Player.SLIDE_DURATION))
     }
-
-    // ── Hitboxes ──────────────────────────────────────────────────────────────
-
-    private data class Rect(val x: Float, val y: Float, val w: Float, val h: Float)
-
-    private fun playerHitbox(p: Player): Rect {
-        val h = if (p.isSliding) 14f else 28f
-        val w = 18f
-        return Rect(p.x - w / 2f, p.y - h, w, h)
-    }
-
-    private fun obstacleHitbox(obs: Obstacle, floorY: Float): Rect =
-        Rect(obs.x, floorY - obs.height, obs.width.toFloat(), obs.height.toFloat())
-
-    private fun rectsOverlap(a: Rect, b: Rect): Boolean =
-        a.x < b.x + b.w && a.x + a.w > b.x &&
-            a.y < b.y + b.h && a.y + a.h > b.y
-
-    private fun circleRectOverlap(cx: Float, cy: Float, r: Float, rect: Rect): Boolean {
-        val nx = cx.coerceIn(rect.x, rect.x + rect.w)
-        val ny = cy.coerceIn(rect.y, rect.y + rect.h)
-        val dx = cx - nx
-        val dy = cy - ny
-        return dx * dx + dy * dy <= r * r
-    }
-
-    private fun randomInterval(min: Int, max: Int) = Random.nextInt(min, max + 1)
 }
+
+data class CollisionResult(
+    val player: Player, 
+    val lives: Int,
+    val obstacles: List<Obstacle>, 
+    val coins: List<Coin>
+)
