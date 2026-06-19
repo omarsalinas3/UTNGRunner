@@ -34,7 +34,7 @@ object GameEngine {
         )
 
         // Monedas recogidas suman puntos extra (5 por moneda)
-        val coinsCollected = state.coins.size - afterCollision.coins.size
+        val coinsCollected = updatedCoins.size - afterCollision.coins.size
         val newScore = baseScore + (coinsCollected * 5)
 
         return state.copy(

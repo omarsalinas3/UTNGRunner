@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="mx.utng.utngrunner.presentation.game.GameEngineTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-06-19T23:09:47" hostname="LAPTOP-OCDQG56G" time="0.02">
+  <properties/>
+  <testcase name="lives decrease on obstacle collision" classname="mx.utng.utngrunner.presentation.game.GameEngineTest" time="0.018"/>
+  <testcase name="score increases every frame" classname="mx.utng.utngrunner.presentation.game.GameEngineTest" time="0.0"/>
+  <testcase name="level increases at score 300" classname="mx.utng.utngrunner.presentation.game.GameEngineTest" time="0.001"/>
+  <testcase name="game over when lives reach zero" classname="mx.utng.utngrunner.presentation.game.GameEngineTest" time="0.0"/>
+  <testcase name="player falls due to gravity" classname="mx.utng.utngrunner.presentation.game.GameEngineTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
