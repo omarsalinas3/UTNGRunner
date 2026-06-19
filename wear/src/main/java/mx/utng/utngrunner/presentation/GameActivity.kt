@@ -61,8 +61,11 @@ private fun UTNGRunnerApp() {
     val getHighScore = remember { GetHighScoreUseCase(repository) }
     val saveHighScore = remember { SaveHighScoreUseCase(repository) }
 
+    val healthClient = remember { androidx.health.services.client.HealthServices.getClient(context) }
+    val heartRateSource = remember { mx.utng.utngrunner.data.health.HeartRateDataSource(healthClient) }
+
     val vmFactory = remember {
-        GameViewModel.Factory(getHighScore, saveHighScore, context)
+        GameViewModel.Factory(getHighScore, saveHighScore, heartRateSource, context)
     }
     val gameViewModel: GameViewModel = viewModel(factory = vmFactory)
 

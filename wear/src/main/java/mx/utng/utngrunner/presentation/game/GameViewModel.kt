@@ -12,115 +12,126 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import mx.utng.utngrunner.data.health.HeartRateDataSource
 import mx.utng.utngrunner.domain.model.GamePhase
 import mx.utng.utngrunner.domain.model.GameState
+import mx.utng.utngrunner.domain.model.Player
 import mx.utng.utngrunner.domain.usecase.GetHighScoreUseCase
 import mx.utng.utngrunner.domain.usecase.SaveHighScoreUseCase
 
-/**
- * ViewModel del juego — gestiona el estado de UI y el game loop.
- *
- * Responsabilidades:
- * - Mantener [GameState] como StateFlow para que [GameScreen] recomponga
- * - Arrancar/detener el game loop a ~60 fps usando coroutines
- * - Delegar lógica de dominio a [GetHighScoreUseCase] / [SaveHighScoreUseCase]
- * - Coordinar con [GameEngine] para calcular cada frame
- *
- * NO conoce Composables ni Canvas — eso es responsabilidad de GameScreen/GameRenderer.
- */
 class GameViewModel(
-    private val getHighScoreUseCase: GetHighScoreUseCase,
-    private val saveHighScoreUseCase: SaveHighScoreUseCase,
-    private val context: Context,
+    private val getHighScore: GetHighScoreUseCase,
+    private val saveHighScore: SaveHighScoreUseCase,
+    private val heartRateSource: HeartRateDataSource,
+    private val context: Context // Preservamos Context para la vibración
 ) : ViewModel() {
 
-    companion object {
-        private const val FRAME_DELAY_MS = 16L  // ~60 fps
+    private val _state = MutableStateFlow(GameState())
+    val state: StateFlow<GameState> = _state.asStateFlow()
+    
+    // Alias de retrocompatibilidad para no romper GameScreen
+    val gameState: StateFlow<GameState> = state
+
+    private var gameFrame = 0L
+    private var gameJob: Job? = null
+
+    init {
+        loadHighScore()
+        observeHeartRate()
     }
 
-    // ── Estado de UI ──────────────────────────────────────────────────────────
-    private val _gameState = MutableStateFlow(GameState())
-    val gameState: StateFlow<GameState> = _gameState.asStateFlow()
-
-    // ── Dimensiones de pantalla ───────────────────────────────────────────────
-    private var screenWidth: Float = 454f   // Galaxy Watch 6 por defecto
-
-    private var gameLoopJob: Job? = null
-
-    // ── API pública ───────────────────────────────────────────────────────────
-
-    /** Inicia una nueva partida cargando el récord histórico. */
     fun startGame() {
-        viewModelScope.launch {
-            val highScore = getHighScoreUseCase()
-            _gameState.value = GameState(
-                phase     = GamePhase.PLAYING,
-                highScore = highScore,
-            )
-            startGameLoop()
+        _state.update { it.copy(
+            phase     = GamePhase.PLAYING,
+            highScore = it.highScore,
+            score     = 0,
+            lives     = 3,
+            player    = Player(),
+            obstacles = emptyList(),
+            coins     = emptyList()
+        ) }
+        gameFrame = 0L
+        gameJob?.cancel()
+        gameJob = viewModelScope.launch {
+            // 60 fps → ~16ms por frame
+            while (_state.value.phase == GamePhase.PLAYING) {
+                delay(16L)
+                _state.update { GameEngine.update(it, gameFrame++) }
+            }
+            if (_state.value.phase == GamePhase.DEAD) {
+                vibrate()
+                saveHighScore(_state.value.score)
+            }
         }
     }
 
-    /** El jugador toca la pantalla → salto. */
-    fun onTap() {
-        _gameState.value = GameEngine.jump(_gameState.value)
-    }
-
-    /** El jugador hace swipe hacia abajo → deslizamiento. */
-    fun onSlide() {
-        _gameState.value = GameEngine.slide(_gameState.value)
-    }
-
-    /** Pausa o reanuda el game loop. */
-    fun togglePause() {
-        val state = _gameState.value
-        when (state.phase) {
+    fun onJump() {
+        val s = _state.value
+        when (s.phase) {
+            GamePhase.IDLE, GamePhase.DEAD -> startGame()
             GamePhase.PLAYING -> {
-                gameLoopJob?.cancel()
-                _gameState.value = state.copy(phase = GamePhase.PAUSED)
+                if (!s.player.isJumping && s.player.y >= Player.FLOOR_Y - 5f) {
+                    _state.update { it.copy(player = it.player.copy(
+                        velocityY = Player.JUMP_VELOCITY, isJumping = true
+                    ))}
+                }
             }
-            GamePhase.PAUSED -> {
-                _gameState.value = state.copy(phase = GamePhase.PLAYING)
-                startGameLoop()
-            }
-            else -> Unit
+            else -> {}
         }
     }
 
-    /** Actualiza el ancho de pantalla cuando GameScreen resuelve su layout. */
-    fun setScreenWidth(width: Float) {
-        screenWidth = width
+    fun onSlide() {
+        if (_state.value.phase != GamePhase.PLAYING || _state.value.player.isJumping) return
+        _state.update { it.copy(player = it.player.copy(
+            slideFrames = Player.SLIDE_DURATION
+        ))}
     }
 
-    // ── Game Loop ─────────────────────────────────────────────────────────────
-
-    private fun startGameLoop() {
-        gameLoopJob?.cancel()
-        gameLoopJob = viewModelScope.launch {
-            var frame = 0L
-            while (_gameState.value.phase == GamePhase.PLAYING) {
-                delay(FRAME_DELAY_MS)
-                frame++
-                val next = GameEngine.update(_gameState.value, frame)
-                _gameState.value = next
-                if (next.phase == GamePhase.DEAD) {
-                    onGameOver(next.score)
-                    break
+    // Alias para GameScreen (que llama a onTap)
+    fun onTap() = onJump()
+    
+    fun togglePause() {
+        val s = _state.value
+        if (s.phase == GamePhase.PLAYING) {
+            gameJob?.cancel()
+            _state.update { it.copy(phase = GamePhase.PAUSED) }
+        } else if (s.phase == GamePhase.PAUSED) {
+            _state.update { it.copy(phase = GamePhase.PLAYING) }
+            gameJob = viewModelScope.launch {
+                while (_state.value.phase == GamePhase.PLAYING) {
+                    delay(16L)
+                    _state.update { GameEngine.update(it, gameFrame++) }
+                }
+                if (_state.value.phase == GamePhase.DEAD) {
+                    vibrate()
+                    saveHighScore(_state.value.score)
                 }
             }
         }
     }
 
-    private fun onGameOver(score: Int) {
-        gameLoopJob?.cancel()
-        vibrate()
+    fun setScreenWidth(width: Float) {
+        // En el PASO 4 omitimos el parámetro y usamos 240/250 fijo en GameEngine.
+        // Se preserva la función vacía para que GameScreen.kt siga compilando.
+    }
+
+    private fun loadHighScore() {
         viewModelScope.launch {
-            saveHighScoreUseCase(score)
+            val hs = getHighScore()
+            _state.update { it.copy(highScore = hs) }
         }
     }
 
-    // ── Feedback háptico ──────────────────────────────────────────────────────
+    private fun observeHeartRate() {
+        viewModelScope.launch {
+            heartRateSource.startMonitoring()
+            heartRateSource.heartRate.collect { bpm ->
+                _state.update { it.copy(heartRate = bpm) }
+            }
+        }
+    }
 
     @Suppress("DEPRECATION")
     private fun vibrate() {
@@ -132,20 +143,20 @@ class GameViewModel(
         }
     }
 
-    override fun onCleared() {
+    override fun onCleared() { 
+        gameJob?.cancel() 
         super.onCleared()
-        gameLoopJob?.cancel()
     }
-
+    
     // ── Factory ───────────────────────────────────────────────────────────────
-
     class Factory(
-        private val getHighScoreUseCase: GetHighScoreUseCase,
-        private val saveHighScoreUseCase: SaveHighScoreUseCase,
-        private val context: Context,
+        private val getHighScore: GetHighScoreUseCase,
+        private val saveHighScore: SaveHighScoreUseCase,
+        private val heartRateSource: HeartRateDataSource,
+        private val context: Context
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            GameViewModel(getHighScoreUseCase, saveHighScoreUseCase, context) as T
+            GameViewModel(getHighScore, saveHighScore, heartRateSource, context) as T
     }
 }
